@@ -1,22 +1,31 @@
-﻿using System;
+﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+using System;
 using System.Collections.Generic;
-using System.Data.Entity;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 using TrackerEnabledDbContext.Common.Auditors;
-using TrackerEnabledDbContext.Common.Configuration;
 using TrackerEnabledDbContext.Common.Models;
 using TrackerEnabledDbContext.Common.Testing;
 using TrackerEnabledDbContext.Common.Testing.Extensions;
 using TrackerEnabledDbContext.Common.Testing.Models;
 
-namespace TrackerEnabledDbContext.IntegrationTests
+namespace TrackerEnabledDbContext.Identity.IntegrationTests
 {
     [TestClass]
-    public class TrackerContextIntegrationTests : PersistanceTests<TestTrackerContext>
+    public class TrackerIdentityContextIntegrationTests : PersistanceTests<TestTrackerIdentityContext>
     {
+        private DbContextOptionsBuilder optionsBuilder;
+        public TrackerIdentityContextIntegrationTests()
+        {
+            optionsBuilder = new DbContextOptionsBuilder<TestTrackerIdentityContext>();
+            optionsBuilder.UseInMemoryDatabase("TestTrackerContext");
+            var options = optionsBuilder.Options;
+            Db = new TestTrackerIdentityContext(options);
+            ObjectFactory = new Common.Testing.Code.ObjectFactory<TestTrackerIdentityContext>(Db);
+        }
+
         [TestMethod]
         public void Can_save_model()
         {
@@ -66,7 +75,7 @@ namespace TrackerEnabledDbContext.IntegrationTests
             var parent = new ParentModel();
             child.Parent = parent;
 
-            Db.Entry(child).State = EntityState.Added;
+            Db.Children.Add(child);
 
             Db.SaveChanges();
 
@@ -117,8 +126,8 @@ namespace TrackerEnabledDbContext.IntegrationTests
             Db.SaveChanges(userName);
 
             model.AssertAuditForAddition(Db, model.Id, userName,
-                x => x.Description,
-                x => x.Id);
+                 x => x.Description,
+                 x => x.Id);
         }
 
         [TestMethod]
@@ -139,8 +148,8 @@ namespace TrackerEnabledDbContext.IntegrationTests
             Db.SaveChanges(userName);
 
             normalModel.AssertAuditForDeletion(Db, normalModel.Id, userName,
-                x => x.Description,
-                x => x.Id);
+                 x => x.Description,
+                 x => x.Id);
         }
 
         [TestMethod]
@@ -162,7 +171,7 @@ namespace TrackerEnabledDbContext.IntegrationTests
 
             //assert
             normalModel.AssertAuditForDeletion(Db, normalModel.Id, null,
-                x => x.Description,
+                 x => x.Description,
                 x => x.Id);
         }
 
@@ -172,7 +181,7 @@ namespace TrackerEnabledDbContext.IntegrationTests
             //add enity
             string oldDescription = RandomText;
             string newDescription = RandomText;
-            var entity = new NormalModel {Description = oldDescription};
+            var entity = new NormalModel { Description = oldDescription };
             Db.Entry(entity).State = EntityState.Added;
             Db.SaveChanges();
 
@@ -200,7 +209,7 @@ namespace TrackerEnabledDbContext.IntegrationTests
         {
             //add enitties
             var parent1 = new ParentModel();
-            var child = new ChildModel {Parent = parent1};
+            var child = new ChildModel { Parent = parent1 };
             Db.Children.Add(child);
             Db.SaveChanges();
 
@@ -233,45 +242,12 @@ namespace TrackerEnabledDbContext.IntegrationTests
         }
 
         [TestMethod]
-        public void Can_track_complex_type_property_change()
-        {
-            //add enity
-            string oldDescription = RandomText;
-            string newDescription = RandomText;
-
-            //only set one of the properties on the complex type
-            var complexType = new ComplexType { Property1 = oldDescription };
-            var entity = new ModelWithComplexType { ComplexType = complexType };
-
-            Db.ModelsWithComplexType.Add(entity);
-            Db.SaveChanges();
-
-            //modify entity
-            entity.ComplexType.Property1 = newDescription;
-            Db.SaveChanges();
-
-            AuditLogDetail[] expectedLog = new List<AuditLogDetail>
-            {
-                new AuditLogDetail
-                {
-                    NewValue = newDescription,
-                    OriginalValue = oldDescription,
-                    PropertyName = "ComplexType_Property1"
-                }
-            }.ToArray();
-
-
-            //assert
-            entity.AssertAuditForModification(Db, entity.Id, null, expectedLog);
-        }
-
-        [TestMethod]
         public async Task Can_skip_tracking_of_property()
         {
             string username = RandomText;
 
             //add enitties
-            var entity = new ModelWithSkipTracking {TrackedProperty = Guid.NewGuid(), UnTrackedProperty = RandomText};
+            var entity = new ModelWithSkipTracking { TrackedProperty = Guid.NewGuid(), UnTrackedProperty = RandomText };
             Db.ModelsWithSkipTracking.Add(entity);
             await Db.SaveChangesAsync(username, CancellationToken.None);
 
@@ -280,7 +256,7 @@ namespace TrackerEnabledDbContext.IntegrationTests
 
             //assert addtion
             entity.AssertAuditForAddition(Db, entity.Id, username,
-                x => x.TrackedProperty,
+                 x => x.TrackedProperty,
                 x => x.Id);
         }
 
@@ -301,12 +277,13 @@ namespace TrackerEnabledDbContext.IntegrationTests
             Db.ModelsWithCompositeKey.Add(entity);
             Db.SaveChanges(userName);
 
-            string expectedKey = $"[{key1},{key2}]";
+            string expectedKey = string.Format("[{0},{1}]", key1, key2);
 
             entity.AssertAuditForAddition(Db, expectedKey, userName,
                 x => x.Description,
                 x => x.Key1,
-                x=>x.Key2);
+                x => x.Key2
+                );
         }
 
         [TestMethod]
@@ -362,14 +339,18 @@ namespace TrackerEnabledDbContext.IntegrationTests
             await Db.SaveChangesAsync(RandomText);
             model.Id.AssertIsNotZero();
 
-            IEnumerable<AuditLog> logs = Db.GetLogs("TrackerEnabledDbContext.Common.Testing.Models.NormalModel")
-                .AssertCountIsNotZero("logs not found");
+            IEnumerable<AuditLog> logs = Db
+                .GetLogs("TrackerEnabledDbContext.Common.Testing.Models.NormalModel")
+                .ToList();
+
+            logs.AssertCountIsNotZero("logs not found");
 
             AuditLog lastLog = logs.LastOrDefault().AssertIsNotNull("last log is null");
 
             IEnumerable<AuditLogDetail> details = lastLog.LogDetails
-                .AssertIsNotNull("log details is null")
-                .AssertCountIsNotZero("no log details found");
+                .AssertIsNotNull("log details is null");
+
+            details.AssertCountIsNotZero("no log details found");
         }
 
         [TestMethod]
@@ -380,27 +361,21 @@ namespace TrackerEnabledDbContext.IntegrationTests
             //add enity
             string oldDescription = RandomText;
             string newDescription = RandomText;
-            var entity = new NormalModel {Description = oldDescription};
+            var entity = new NormalModel { Description = oldDescription };
             Db.Entry(entity).State = EntityState.Added;
-            Db.SaveChanges();
+            Db.SaveChanges(userId);
 
             //modify entity
             entity.Description = newDescription;
             await Db.SaveChangesAsync(userId);
 
-            AuditLogDetail[] expectedLog = new List<AuditLogDetail>
-            {
-                new AuditLogDetail
-                {
-                    NewValue = newDescription,
-                    OriginalValue = oldDescription,
-                    PropertyName = "Description"
-                }
-            }.ToArray();
-
-
             //assert
-            entity.AssertAuditForModification(Db, entity.Id, userId.ToString(), expectedLog);
+            entity.AssertAuditForModification(Db, entity.Id, userId.ToString(), new AuditLogDetail
+            {
+                NewValue = newDescription,
+                OriginalValue = oldDescription,
+                PropertyName = "Description"
+            });
         }
 
         [TestMethod]
@@ -412,9 +387,8 @@ namespace TrackerEnabledDbContext.IntegrationTests
             var entry = Db.ChangeTracker.Entries().First();
             var auditor = new AdditionLogDetailsAuditor(entry, null);
 
-            Db.Database.Log = sql => Assert.Fail("Expected no database queries but the following query was executed: {0}", sql);
+            optionsBuilder.LogTo(sql => Assert.Fail("Expected no database queries but the following query was executed: {0}", sql));
             var auditLogDetails = auditor.CreateLogDetails().ToList();
-            Db.Database.Log = null;
         }
 
         [TestMethod]
@@ -428,9 +402,8 @@ namespace TrackerEnabledDbContext.IntegrationTests
             var entry = Db.ChangeTracker.Entries().First();
             var auditor = new ChangeLogDetailsAuditor(entry, null);
 
-            Db.Database.Log = sql => Assert.Fail("Expected no database queries but the following query was executed: {0}", sql);
+            optionsBuilder.LogTo(sql => Assert.Fail("Expected no database queries but the following query was executed: {0}", sql));
             var auditLogDetails = auditor.CreateLogDetails().ToList();
-            Db.Database.Log = null;
         }
 
         [TestMethod]
@@ -444,123 +417,8 @@ namespace TrackerEnabledDbContext.IntegrationTests
             var entry = Db.ChangeTracker.Entries().First();
             var auditor = new ChangeLogDetailsAuditor(entry, null);
 
-            Db.Database.Log = sql => Assert.Fail("Expected no database queries but the following query was executed: {0}", sql);
+            optionsBuilder.LogTo(sql => Assert.Fail("Expected no database queries but the following query was executed: {0}", sql));
             var auditLogDetails = auditor.CreateLogDetails().ToList();
-            Db.Database.Log = null;
-        }
-
-        [TestMethod]
-        public void Should_Not_Log_When_Value_Not_changed()
-        {
-            //arrange
-            EntityTracker.TrackAllProperties<TrackedModelWithMultipleProperties>();
-
-            string oldDescription = RandomText;
-
-            var entity = new TrackedModelWithMultipleProperties()
-            {
-                Description = oldDescription,
-                StartDate = RandomDate,
-            };
-            Db.TrackedModelsWithMultipleProperties.Add(entity);
-            Db.SaveChanges();
-
-            entity.AssertAuditForAddition(Db, entity.Id,
-                null,
-                x => x.Id,
-                x => x.Description,
-                x => x.StartDate);
-
-            //make change to state
-            Db.Entry(entity).State = EntityState.Modified;
-            Db.SaveChanges();
-
-            //make sure there are no unnecessaary logs
-            entity.AssertNoLogs(Db, entity.Id, EventType.Modified);
-        }
-
-        [TestMethod]
-        public void Shoud_Not_Log_EmptyProperties_OnAddition()
-        {
-            //arrange
-            EntityTracker.TrackAllProperties<TrackedModelWithMultipleProperties>();
-            var entity = new TrackedModelWithMultipleProperties();
-
-            Db.TrackedModelsWithMultipleProperties.Add(entity);
-
-            //act
-            Db.SaveChanges();
-
-            //assert
-            entity.AssertAuditForAddition(Db, entity.Id, null,
-                x => x.Id);
-        }
-
-        [TestMethod]
-        public void Shoud_Not_Log_EmptyProperties_On_Deletions()
-        {
-            //arrange
-            EntityTracker.TrackAllProperties<TrackedModelWithMultipleProperties>();
-            var entity = new TrackedModelWithMultipleProperties();
-            Db.TrackedModelsWithMultipleProperties.Add(entity);
-            Db.SaveChanges();
-
-            //act (delete)
-            Db.TrackedModelsWithMultipleProperties.Remove(entity);
-            Db.SaveChanges();
-
-            //assert
-            entity.AssertAuditForDeletion(Db, entity.Id, null,
-                x => x.Id);
-        }
-
-        [TestMethod]
-        public void Should_Log_EmptyProperties_When_Configured_WhileAdding()
-        {
-            //arrange
-            EntityTracker.TrackAllProperties<TrackedModelWithMultipleProperties>();
-            GlobalTrackingConfig.TrackEmptyPropertiesOnAdditionAndDeletion = true;
-
-            var entity = new TrackedModelWithMultipleProperties();
-            Db.TrackedModelsWithMultipleProperties.Add(entity);
-
-            //act
-            Db.SaveChanges();
-
-            //assert
-            entity.AssertAuditForAddition(Db, entity.Id, null,
-                x => x.Id,
-                x => x.Description,
-                x => x.IsSpecial,
-                x => x.Name,
-                x => x.StartDate,
-                x => x.Value);
-        }
-
-        [TestMethod]
-        public void Should_Log_EmptyProperties_When_Configured_WhileDeleting()
-        {
-            //arrange
-            EntityTracker.TrackAllProperties<TrackedModelWithMultipleProperties>();
-            GlobalTrackingConfig.TrackEmptyPropertiesOnAdditionAndDeletion = true;
-
-            var entity = new TrackedModelWithMultipleProperties();
-            Db.TrackedModelsWithMultipleProperties.Add(entity);
-            Db.SaveChanges();
-
-
-            //act
-            Db.TrackedModelsWithMultipleProperties.Remove(entity);
-            Db.SaveChanges();
-
-            //assert
-            entity.AssertAuditForDeletion(Db, entity.Id, null,
-                x => x.Id,
-                x => x.Description,
-                x => x.IsSpecial,
-                x => x.Name,
-                x => x.StartDate,
-                x => x.Value);
         }
 
 
