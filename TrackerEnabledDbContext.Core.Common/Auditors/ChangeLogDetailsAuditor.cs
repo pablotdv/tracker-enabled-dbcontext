@@ -66,7 +66,7 @@ namespace TrackerEnabledDbContext.Common.Auditors
             var propertyValues = (StateOfEntity() == EntityState.Added)
                 ? DbEntry.CurrentValues
                 : DbEntry.OriginalValues;
-            return propertyValues.Properties.Select(x => x.PropertyInfo.Name);
+            return propertyValues.Properties.Where(x => x.PropertyInfo != null).Select(x => x.PropertyInfo.Name);
         }
 
         protected virtual bool IsValueChanged(string propertyName)
