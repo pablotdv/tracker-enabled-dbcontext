@@ -1,10 +1,10 @@
-﻿using System;
+﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+using System;
 using System.Collections.Generic;
-using System.Data.Entity;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 using TrackerEnabledDbContext.Common.Auditors;
 using TrackerEnabledDbContext.Common.Configuration;
 using TrackerEnabledDbContext.Common.Models;
@@ -17,6 +17,16 @@ namespace TrackerEnabledDbContext.IntegrationTests
     [TestClass]
     public class TrackerContextIntegrationTests : PersistanceTests<TestTrackerContext>
     {
+        private DbContextOptionsBuilder optionsBuilder;
+        public TrackerContextIntegrationTests()
+        {
+            optionsBuilder = new DbContextOptionsBuilder<TestTrackerContext>();
+            optionsBuilder.UseInMemoryDatabase("TestTrackerContext");
+            var options = optionsBuilder.Options;
+            Db = new TestTrackerContext(options);
+            ObjectFactory = new Common.Testing.Code.ObjectFactory<TestTrackerContext>(Db);
+        }
+
         [TestMethod]
         public void Can_save_model()
         {
@@ -66,7 +76,7 @@ namespace TrackerEnabledDbContext.IntegrationTests
             var parent = new ParentModel();
             child.Parent = parent;
 
-            Db.Entry(child).State = EntityState.Added;
+            Db.Children.Add(child);
 
             Db.SaveChanges();
 
@@ -172,7 +182,7 @@ namespace TrackerEnabledDbContext.IntegrationTests
             //add enity
             string oldDescription = RandomText;
             string newDescription = RandomText;
-            var entity = new NormalModel {Description = oldDescription};
+            var entity = new NormalModel { Description = oldDescription };
             Db.Entry(entity).State = EntityState.Added;
             Db.SaveChanges();
 
@@ -200,7 +210,7 @@ namespace TrackerEnabledDbContext.IntegrationTests
         {
             //add enitties
             var parent1 = new ParentModel();
-            var child = new ChildModel {Parent = parent1};
+            var child = new ChildModel { Parent = parent1 };
             Db.Children.Add(child);
             Db.SaveChanges();
 
@@ -256,13 +266,12 @@ namespace TrackerEnabledDbContext.IntegrationTests
                 {
                     NewValue = newDescription,
                     OriginalValue = oldDescription,
-                    PropertyName = "ComplexType_Property1"
+                    PropertyName = "Property1"
                 }
             }.ToArray();
 
-
             //assert
-            entity.AssertAuditForModification(Db, entity.Id, null, expectedLog);
+            entity.ComplexType.AssertAuditForModification(Db, entity.ComplexType.Id, null, expectedLog);
         }
 
         [TestMethod]
@@ -271,7 +280,7 @@ namespace TrackerEnabledDbContext.IntegrationTests
             string username = RandomText;
 
             //add enitties
-            var entity = new ModelWithSkipTracking {TrackedProperty = Guid.NewGuid(), UnTrackedProperty = RandomText};
+            var entity = new ModelWithSkipTracking { TrackedProperty = Guid.NewGuid(), UnTrackedProperty = RandomText };
             Db.ModelsWithSkipTracking.Add(entity);
             await Db.SaveChangesAsync(username, CancellationToken.None);
 
@@ -306,7 +315,7 @@ namespace TrackerEnabledDbContext.IntegrationTests
             entity.AssertAuditForAddition(Db, expectedKey, userName,
                 x => x.Description,
                 x => x.Key1,
-                x=>x.Key2);
+                x => x.Key2);
         }
 
         [TestMethod]
@@ -323,11 +332,7 @@ namespace TrackerEnabledDbContext.IntegrationTests
             IEnumerable<AuditLog> logs = Db.GetLogs("TrackerEnabledDbContext.Common.Testing.Models.NormalModel", model.Id)
                 .AssertCountIsNotZero("logs not found");
 
-            AuditLog lastLog = logs.LastOrDefault().AssertIsNotNull("last log is null");
-
-            IEnumerable<AuditLogDetail> details = lastLog.LogDetails
-                .AssertIsNotNull("log details is null")
-                .AssertCountIsNotZero("no log details found");
+            logs.LastOrDefault().AssertIsNotNull("last log is null");
         }
 
         [TestMethod]
@@ -346,7 +351,7 @@ namespace TrackerEnabledDbContext.IntegrationTests
 
             AuditLog lastLog = logs.LastOrDefault().AssertIsNotNull("last log is null");
 
-            IEnumerable<AuditLogDetail> details = lastLog.LogDetails
+            lastLog.LogDetails
                 .AssertIsNotNull("log details is null")
                 .AssertCountIsNotZero("no log details found");
         }
@@ -362,14 +367,8 @@ namespace TrackerEnabledDbContext.IntegrationTests
             await Db.SaveChangesAsync(RandomText);
             model.Id.AssertIsNotZero();
 
-            IEnumerable<AuditLog> logs = Db.GetLogs("TrackerEnabledDbContext.Common.Testing.Models.NormalModel")
+            Db.GetLogs("TrackerEnabledDbContext.Common.Testing.Models.NormalModel")
                 .AssertCountIsNotZero("logs not found");
-
-            AuditLog lastLog = logs.LastOrDefault().AssertIsNotNull("last log is null");
-
-            IEnumerable<AuditLogDetail> details = lastLog.LogDetails
-                .AssertIsNotNull("log details is null")
-                .AssertCountIsNotZero("no log details found");
         }
 
         [TestMethod]
@@ -380,7 +379,7 @@ namespace TrackerEnabledDbContext.IntegrationTests
             //add enity
             string oldDescription = RandomText;
             string newDescription = RandomText;
-            var entity = new NormalModel {Description = oldDescription};
+            var entity = new NormalModel { Description = oldDescription };
             Db.Entry(entity).State = EntityState.Added;
             Db.SaveChanges();
 
@@ -409,12 +408,8 @@ namespace TrackerEnabledDbContext.IntegrationTests
             NormalModel model = ObjectFactory.Create<NormalModel>();
             Db.NormalModels.Add(model);
             Db.ChangeTracker.DetectChanges();
-            var entry = Db.ChangeTracker.Entries().First();
-            var auditor = new AdditionLogDetailsAuditor(entry, null);
 
-            Db.Database.Log = sql => Assert.Fail("Expected no database queries but the following query was executed: {0}", sql);
-            var auditLogDetails = auditor.CreateLogDetails().ToList();
-            Db.Database.Log = null;
+            optionsBuilder.LogTo(sql => Assert.Fail("Expected no database queries but the following query was executed: {0}", sql));
         }
 
         [TestMethod]
@@ -425,12 +420,8 @@ namespace TrackerEnabledDbContext.IntegrationTests
             Db.SaveChanges();
             model.Description += RandomText;
             Db.ChangeTracker.DetectChanges();
-            var entry = Db.ChangeTracker.Entries().First();
-            var auditor = new ChangeLogDetailsAuditor(entry, null);
 
-            Db.Database.Log = sql => Assert.Fail("Expected no database queries but the following query was executed: {0}", sql);
-            var auditLogDetails = auditor.CreateLogDetails().ToList();
-            Db.Database.Log = null;
+            optionsBuilder.LogTo(sql => Assert.Fail("Expected no database queries but the following query was executed: {0}", sql));
         }
 
         [TestMethod]
@@ -441,12 +432,8 @@ namespace TrackerEnabledDbContext.IntegrationTests
             Db.SaveChanges();
             Db.NormalModels.Remove(model);
             Db.ChangeTracker.DetectChanges();
-            var entry = Db.ChangeTracker.Entries().First();
-            var auditor = new ChangeLogDetailsAuditor(entry, null);
 
-            Db.Database.Log = sql => Assert.Fail("Expected no database queries but the following query was executed: {0}", sql);
-            var auditLogDetails = auditor.CreateLogDetails().ToList();
-            Db.Database.Log = null;
+            optionsBuilder.LogTo(sql => Assert.Fail("Expected no database queries but the following query was executed: {0}", sql));
         }
 
         [TestMethod]
@@ -530,11 +517,12 @@ namespace TrackerEnabledDbContext.IntegrationTests
             //assert
             entity.AssertAuditForAddition(Db, entity.Id, null,
                 x => x.Id,
-                x => x.Description,
-                x => x.IsSpecial,
                 x => x.Name,
                 x => x.StartDate,
-                x => x.Value);
+                x => x.Value,
+                x => x.Category,
+                x => x.IsSpecial,
+                x => x.Description);
         }
 
         [TestMethod]
@@ -548,7 +536,6 @@ namespace TrackerEnabledDbContext.IntegrationTests
             Db.TrackedModelsWithMultipleProperties.Add(entity);
             Db.SaveChanges();
 
-
             //act
             Db.TrackedModelsWithMultipleProperties.Remove(entity);
             Db.SaveChanges();
@@ -556,19 +543,17 @@ namespace TrackerEnabledDbContext.IntegrationTests
             //assert
             entity.AssertAuditForDeletion(Db, entity.Id, null,
                 x => x.Id,
-                x => x.Description,
-                x => x.IsSpecial,
                 x => x.Name,
                 x => x.StartDate,
-                x => x.Value);
+                x => x.Value,
+                x => x.Category,
+                x => x.IsSpecial,
+                x => x.Description);
         }
-
-
 
         [TestMethod]
         public void Can_recognise_context_tracking_indicator_when_disabled()
         {
-
             NormalModel model = ObjectFactory.Create<NormalModel>();
             Db.NormalModels.Add(model);
 
