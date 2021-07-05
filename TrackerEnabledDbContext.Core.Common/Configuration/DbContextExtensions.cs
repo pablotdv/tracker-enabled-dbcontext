@@ -16,6 +16,8 @@ namespace TrackerEnabledDbContext.Common.Configuration
 
         public static IEnumerable<PropertyConfiguerationKey> GetKeyNames(this DbContext context, Type entity)
         {
+            if (entity.Name.EndsWith("Proxy"))
+                entity = entity.BaseType;
             var entityType = context.Model.FindEntityType(entity);
             return entityType
                 .GetKeys()
